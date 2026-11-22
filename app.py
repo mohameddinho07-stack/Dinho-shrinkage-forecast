@@ -48,27 +48,28 @@ if uploaded_file:
             lobs
         )
 
-        if st.button("Generate Forecast"):
+     if st.button("Generate Forecast"):
 
-            result = forecast_lob(
-                df,
-                selected_lob
-            )
+    result = forecast_lob(
+        df,
+        selected_lob
+    )
 
-                            st.subheader("Forecast Result")
-                
-                            # Display percentages correctly
-                          st.dataframe(
-                    result.style.format({
-                        "ABS Forecast": "{:.2%}",
-                        "Offline Forecast": "{:.2%}",
-                        "Total Shrinkage": "{:.2%}"
-                    }),
-                    use_container_width=True
-                )
+    st.subheader("Forecast Result")
 
-            # Trend chart
-            if "Total Shrinkage" in result.columns:
+    st.dataframe(
+        result.style.format({
+            "ABS Forecast": "{:.2%}",
+            "Offline Forecast": "{:.2%}",
+            "Total Shrinkage": "{:.2%}"
+        }),
+        use_container_width=True
+    )
+
+    # Trend chart
+    if "Total Shrinkage" in result.columns:
+
+        st.subheader("Shrinkage Trend")
 
                 st.subheader("Shrinkage Trend")
 
