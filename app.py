@@ -55,17 +55,17 @@ if uploaded_file:
                 selected_lob
             )
 
-            st.subheader("Forecast Result")
-
-            # Display percentages correctly
-          st.dataframe(
-    result.style.format({
-        "ABS Forecast": "{:.2%}",
-        "Offline Forecast": "{:.2%}",
-        "Total Shrinkage": "{:.2%}"
-    }),
-    use_container_width=True
-)
+                            st.subheader("Forecast Result")
+                
+                            # Display percentages correctly
+                          st.dataframe(
+                    result.style.format({
+                        "ABS Forecast": "{:.2%}",
+                        "Offline Forecast": "{:.2%}",
+                        "Total Shrinkage": "{:.2%}"
+                    }),
+                    use_container_width=True
+                )
 
             # Trend chart
             if "Total Shrinkage" in result.columns:
