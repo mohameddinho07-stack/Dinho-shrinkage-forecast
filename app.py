@@ -44,58 +44,96 @@ if uploaded_file:
             df["LOB"].dropna().unique()
         )
 
-        selected_lob = st.selectbox(
-            "Select LOB",
-            lobs
+        st.success(
+            f"{len(lobs)} LOBs detected"
         )
 
-        if st.button("Generate Forecast"):
+        if st.button("Generate Forecast For All LOBs"):
 
-            result = forecast_lob(
-                df,
-                selected_lob
-            )
+            all_results = []
 
-            st.subheader(
-                "Forecast Result"
-            )
+            for lob in lobs:
 
-            st.dataframe(
-                result.style.format({
-                    "ABS Forecast": "{:.2%}",
-                    "Offline Forecast": "{:.2%}",
-                    "Total Shrinkage": "{:.2%}"
-                }),
-                use_container_width=True
-            )
+                try:
 
-            if "Total Shrinkage" in result.columns:
+                    forecast = forecast_lob(
+                        df,
+                        lob
+                    )
+
+                    if len(forecast) > 0:
+
+                        forecast.insert(
+                            0,
+                            "LOB",
+                            lob
+                        )
+
+                        all_results.append(
+                            forecast
+                        )
+
+                except Exception as e:
+
+                    st.warning(
+                        f"Error with {lob}: {e}"
+                    )
+
+            if len(all_results) > 0:
+
+                result = pd.concat(
+                    all_results,
+                    ignore_index=True
+                )
 
                 st.subheader(
-                    "Shrinkage Trend"
+                    "Forecast Results"
                 )
 
-                chart_df = result.copy()
-
-                chart_df["Date"] = pd.to_datetime(
-                    chart_df["Date"]
+                st.dataframe(
+                    result.style.format({
+                        "ABS Forecast": "{:.2%}",
+                        "Offline Forecast": "{:.2%}",
+                        "Total Shrinkage": "{:.2%}"
+                    }),
+                    use_container_width=True
                 )
 
-                st.line_chart(
-                    chart_df.set_index(
-                        "Date"
-                    )[
-                        ["Total Shrinkage"]
-                    ]
+                if "Total Shrinkage" in result.columns:
+
+                    st.subheader(
+                        "Shrinkage Trend"
+                    )
+
+                    chart_df = result.copy()
+
+                    chart_df["Date"] = pd.to_datetime(
+                        chart_df["Date"]
+                    )
+
+                    st.line_chart(
+                        chart_df.pivot_table(
+                            index="Date",
+                            columns="LOB",
+                            values="Total Shrinkage"
+                        )
+                    )
+
+                export_df = result.copy()
+
+                csv = export_df.to_csv(
+                    index=False
+                ).encode("utf-8")
+
+                st.download_button(
+                    label="Download Forecast",
+                    data=csv,
+                    file_name="All_LOBs_Forecast.csv",
+                    mime="text/csv"
                 )
 
-            csv = result.to_csv(
-                index=False
-            ).encode("utf-8")
+            else:
 
-            st.download_button(
-                label="Download Forecast",
-                data=csv,
-                file_name="Shrinkage_Forecast.csv",
-                mime="text/csv"
-            )
+                st.error(
+                    "No forecast results generated"
+                )
