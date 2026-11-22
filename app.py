@@ -58,17 +58,18 @@ if uploaded_file:
             st.subheader("Forecast Result")
 
             # Display percentages correctly
-            st.dataframe(
-                result.style.format({
-                    "ABS Forecast %": "{:.2f}%",
-                    "Offline Forecast %": "{:.2f}%",
-                    "Total Shrinkage %": "{:.2f}%"
-                }),
-                use_container_width=True
+          st.dataframe(
+    result.style.format({
+        "ABS Forecast": "{:.2%}",
+        "Offline Forecast": "{:.2%}",
+        "Total Shrinkage": "{:.2%}"
+    }),
+    use_container_width=True
+)
             )
 
             # Trend chart
-            if "Total Shrinkage %" in result.columns:
+            if "Total Shrinkage" in result.columns:
 
                 st.subheader("Shrinkage Trend")
 
