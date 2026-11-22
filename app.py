@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+
 from forecast_engine import forecast_lob
 
 st.set_page_config(
@@ -48,30 +49,31 @@ if uploaded_file:
             lobs
         )
 
-     if st.button("Generate Forecast"):
+        if st.button("Generate Forecast"):
 
-    result = forecast_lob(
-        df,
-        selected_lob
-    )
+            result = forecast_lob(
+                df,
+                selected_lob
+            )
 
-    st.subheader("Forecast Result")
+            st.subheader(
+                "Forecast Result"
+            )
 
-    st.dataframe(
-        result.style.format({
-            "ABS Forecast": "{:.2%}",
-            "Offline Forecast": "{:.2%}",
-            "Total Shrinkage": "{:.2%}"
-        }),
-        use_container_width=True
-    )
+            st.dataframe(
+                result.style.format({
+                    "ABS Forecast": "{:.2%}",
+                    "Offline Forecast": "{:.2%}",
+                    "Total Shrinkage": "{:.2%}"
+                }),
+                use_container_width=True
+            )
 
-    # Trend chart
-    if "Total Shrinkage" in result.columns:
+            if "Total Shrinkage" in result.columns:
 
-        st.subheader("Shrinkage Trend")
-
-                st.subheader("Shrinkage Trend")
+                st.subheader(
+                    "Shrinkage Trend"
+                )
 
                 chart_df = result.copy()
 
@@ -80,12 +82,13 @@ if uploaded_file:
                 )
 
                 st.line_chart(
-                    chart_df.set_index("Date")[
-                        ["Total Shrinkage %"]
+                    chart_df.set_index(
+                        "Date"
+                    )[
+                        ["Total Shrinkage"]
                     ]
                 )
 
-            # Download CSV
             csv = result.to_csv(
                 index=False
             ).encode("utf-8")
