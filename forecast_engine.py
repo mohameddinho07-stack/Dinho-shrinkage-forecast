@@ -1,262 +1,146 @@
 import pandas as pd
 import numpy as np
 
-from sklearn.ensemble import IsolationForest
 
+def remove_outliers(series):
 
-def normalize_series(series):
+    q1 = series.quantile(0.25)
+    q3 = series.quantile(0.75)
 
-    median = series.median()
+    iqr = q3 - q1
 
-    mad = np.median(
-        np.abs(series - median)
-    )
+    lower = q1 - (1.5 * iqr)
+    upper = q3 + (1.5 * iqr)
 
-    if mad == 0:
-        return series
-
-    lower = median - (3 * 1.4826 * mad)
-    upper = median + (3 * 1.4826 * mad)
-
-    return series.clip(
-        lower=lower,
-        upper=upper
-    )
-
-
-def detect_operation(df):
-
-    weekday_map = {
-        0: "Monday",
-        1: "Tuesday",
-        2: "Wednesday",
-        3: "Thursday",
-        4: "Friday",
-        5: "Saturday",
-        6: "Sunday",
-    }
-
-    active_days = []
-
-    for day_number in range(7):
-
-        day_df = df[
-            df["Date"].dt.weekday
-            == day_number
-        ]
-
-        if len(day_df) == 0:
-            continue
-
-        avg_hours = (
-            day_df["Scheduled Hours"]
-            .mean()
-        )
-
-        if avg_hours > 0:
-
-            active_days.append(
-                weekday_map[day_number]
-            )
-
-    return active_days
-
-
-def confidence_score(record_count):
-
-    score = min(
-        95,
-        max(
-            40,
-            round(
-                (record_count / 90)
-            )
-        )
-    )
-
-    return score
+    return series.clip(lower, upper)
 
 
 def forecast_lob(df, lob):
 
-    df = df.copy()
+    df = df[df["LOB"] == lob].copy()
 
-    df = df[
-        df["LOB"] == lob
-    ]
+    if len(df) == 0:
+        return pd.DataFrame()
 
-    df["Date"] = pd.to_datetime(
-        df["Date"]
+    df["Date"] = pd.to_datetime(df["Date"])
+
+    df = df[df["Scheduled Hours"] > 0]
+
+    # Percentages as decimal
+    df["ABS"] = (
+        df["Abs Hours"]
+        / df["Scheduled Hours"]
     )
 
-    df["ABS%"] = (
-        df["Abs Hours"] /
-        df["Scheduled Hours"]
+    df["OFFLINE"] = (
+        df["Offline"]
+        / df["Scheduled Hours"]
     )
 
-    df["Offline%"] = (
-        df["Offline"] /
-        df["Scheduled Hours"]
+    df["TOTAL"] = (
+        df["ABS"]
+        + df["OFFLINE"]
     )
 
-    df = df.replace(
-        [np.inf, -np.inf],
-        np.nan
+    df["Weekday"] = df["Date"].dt.day_name()
+
+    # Remove Extreme Outliers
+    df["ABS"] = remove_outliers(df["ABS"])
+    df["OFFLINE"] = remove_outliers(df["OFFLINE"])
+    df["TOTAL"] = remove_outliers(df["TOTAL"])
+
+    # Detect working days automatically
+    weekday_counts = (
+        df["Weekday"]
+        .value_counts()
+        .to_dict()
     )
 
-    df = df.dropna()
+    working_days = []
 
-    record_count = len(df)
+    for day in [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday"
+    ]:
 
-    operation_days = detect_operation(df)
+        if weekday_counts.get(day, 0) >= 3:
+            working_days.append(day)
 
-    operation_type = (
-        f"{len(operation_days)} Day Operation"
-    )
-
-    df["Weekday"] = (
-        df["Date"]
-        .dt.day_name()
-    )
-
-    outlier_count = 0
-
-    if len(df) >= 10:
-
-        iso = IsolationForest(
-            contamination=0.05,
-            random_state=42
+    if not working_days:
+        working_days = list(
+            df["Weekday"].unique()
         )
 
-        preds = iso.fit_predict(
-            df[
-                [
-                    "ABS%",
-                    "Offline%"
-                ]
-            ]
-        )
-
-        outlier_count = int(
-            (preds == -1).sum()
-        )
-
-        df = df.assign(
-            Outlier=preds
-        )
-
-    df["ABS%"] = normalize_series(
-        df["ABS%"]
-    )
-
-    df["Offline%"] = normalize_series(
-        df["Offline%"]
-    )
-
-    last_date = (
-        df["Date"].max()
-    )
+    last_date = df["Date"].max()
 
     forecast_rows = []
 
-    for i in range(1, 8):
+    current_date = last_date
 
-        forecast_date = (
-            last_date
-            + pd.Timedelta(days=i)
+    target_days = len(working_days)
+
+    generated = 0
+
+    while generated < target_days:
+
+        current_date += pd.Timedelta(days=1)
+
+        day_name = current_date.day_name()
+
+        if day_name not in working_days:
+            continue
+
+        historical = df[
+            df["Weekday"] == day_name
+        ].copy()
+
+        historical = historical.sort_values(
+            "Date"
         )
 
-        weekday = (
-            forecast_date.day_name()
+        # Last 8 occurrences
+        historical = historical.tail(8)
+
+        abs_forecast = historical["ABS"].median()
+
+        offline_forecast = (
+            historical["OFFLINE"]
+            .median()
         )
 
-        day_df = df[
-            df["Weekday"]
-            == weekday
-        ]
-
-        if len(day_df) == 0:
-
-            abs_fc = (
-                df["ABS%"].mean()
-            )
-
-            off_fc = (
-                df["Offline%"].mean()
-            )
-
-        else:
-
-            weights = np.arange(
-                1,
-                len(day_df) + 1
-            )
-
-            abs_fc = np.average(
-                day_df["ABS%"],
-                weights=weights
-            )
-
-            off_fc = np.average(
-                day_df["Offline%"],
-                weights=weights
-            )
-
-        forecast_rows.append(
-            {
-                "Date":
-                    forecast_date.date(),
-                "Day":
-                    weekday,
-                "Operating Day":
-                    "Yes"
-                    if weekday in operation_days
-                    else "No",
-                "ABS Forecast %":
-                    round(
-                        abs_fc * 100,
-                        2
-                    ),
-                "Offline Forecast %":
-                    round(
-                        off_fc * 100,
-                        2
-                    ),
-                "Total Shrinkage %":
-                    round(
-                        (
-                            abs_fc +
-                            off_fc
-                        ) * 100,
-                        2
-                    )
-            }
+        total_forecast = (
+            abs_forecast
+            + offline_forecast
         )
 
-    forecast = pd.DataFrame(
+        forecast_rows.append({
+
+            "Date":
+            current_date.date(),
+
+            "Day":
+            day_name,
+
+            "ABS Forecast":
+            round(abs_forecast, 4),
+
+            "Offline Forecast":
+            round(offline_forecast, 4),
+
+            "Total Shrinkage":
+            round(total_forecast, 4)
+
+        })
+
+        generated += 1
+
+    result = pd.DataFrame(
         forecast_rows
     )
 
-    forecast.attrs[
-        "operation_type"
-    ] = operation_type
-
-    forecast.attrs[
-        "working_days"
-    ] = operation_days
-
-    forecast.attrs[
-        "confidence"
-    ] = confidence_score(
-        record_count
-    )
-
-    forecast.attrs[
-        "outliers"
-    ] = outlier_count
-
-    forecast.attrs[
-        "records"
-    ] = record_count
-
-    return forecast
+    return result
