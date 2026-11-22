@@ -69,7 +69,7 @@ def confidence_score(record_count):
         max(
             40,
             round(
-                (record_count / 90) * 100
+                (record_count / 90)
             )
         )
     )
