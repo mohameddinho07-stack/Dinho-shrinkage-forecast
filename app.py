@@ -66,7 +66,6 @@ if uploaded_file:
     }),
     use_container_width=True
 )
-            )
 
             # Trend chart
             if "Total Shrinkage" in result.columns:
