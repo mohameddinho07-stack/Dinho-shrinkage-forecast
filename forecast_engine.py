@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 
-def remove_outliers(series):
+def remove_outliers_iqr(series):
 
     q1 = series.quantile(0.25)
     q3 = series.quantile(0.75)
@@ -13,6 +13,18 @@ def remove_outliers(series):
     upper = q3 + (1.5 * iqr)
 
     return series.clip(lower, upper)
+
+
+def weighted_forecast(values):
+
+    if len(values) == 0:
+        return 0
+
+    values = list(values)
+
+    weights = np.arange(1, len(values) + 1)
+
+    return np.average(values, weights=weights)
 
 
 def forecast_lob(df, lob):
@@ -26,39 +38,38 @@ def forecast_lob(df, lob):
 
     df = df[df["Scheduled Hours"] > 0]
 
-    # Percentages as decimal
-    df["ABS"] = (
-        df["Abs Hours"]
-        / df["Scheduled Hours"]
+    # Recalculate from source
+    df["ABS_RATE"] = (
+        df["Abs Hours"] /
+        df["Scheduled Hours"]
     )
 
-    df["OFFLINE"] = (
-        df["Offline"]
-        / df["Scheduled Hours"]
+    df["OFFLINE_RATE"] = (
+        df["Offline"] /
+        df["Scheduled Hours"]
     )
 
-    df["TOTAL"] = (
-        df["ABS"]
-        + df["OFFLINE"]
+    df["TOTAL_RATE"] = (
+        df["ABS_RATE"] +
+        df["OFFLINE_RATE"]
+    )
+
+    # Remove bad data
+    df["ABS_RATE"] = remove_outliers_iqr(
+        df["ABS_RATE"]
+    )
+
+    df["OFFLINE_RATE"] = remove_outliers_iqr(
+        df["OFFLINE_RATE"]
+    )
+
+    df["TOTAL_RATE"] = remove_outliers_iqr(
+        df["TOTAL_RATE"]
     )
 
     df["Weekday"] = df["Date"].dt.day_name()
 
-    # Remove Extreme Outliers
-    df["ABS"] = remove_outliers(df["ABS"])
-    df["OFFLINE"] = remove_outliers(df["OFFLINE"])
-    df["TOTAL"] = remove_outliers(df["TOTAL"])
-
-    # Detect working days automatically
-    weekday_counts = (
-        df["Weekday"]
-        .value_counts()
-        .to_dict()
-    )
-
-    working_days = []
-
-    for day in [
+    weekday_order = [
         "Monday",
         "Tuesday",
         "Wednesday",
@@ -66,25 +77,43 @@ def forecast_lob(df, lob):
         "Friday",
         "Saturday",
         "Sunday"
-    ]:
+    ]
 
-        if weekday_counts.get(day, 0) >= 3:
+    # Detect real operating days
+    working_days = []
+
+    weekday_counts = (
+        df["Weekday"]
+        .value_counts()
+        .to_dict()
+    )
+
+    max_count = max(
+        weekday_counts.values()
+    )
+
+    for day in weekday_order:
+
+        cnt = weekday_counts.get(day, 0)
+
+        if cnt >= (max_count * 0.5):
             working_days.append(day)
 
-    if not working_days:
+    if len(working_days) == 0:
+
         working_days = list(
             df["Weekday"].unique()
         )
 
     last_date = df["Date"].max()
 
-    forecast_rows = []
+    future_rows = []
 
     current_date = last_date
 
-    target_days = len(working_days)
-
     generated = 0
+
+    target_days = len(working_days)
 
     while generated < target_days:
 
@@ -95,52 +124,53 @@ def forecast_lob(df, lob):
         if day_name not in working_days:
             continue
 
-        historical = df[
-            df["Weekday"] == day_name
-        ].copy()
-
-        historical = historical.sort_values(
-            "Date"
+        day_history = (
+            df[
+                df["Weekday"] == day_name
+            ]
+            .sort_values("Date")
+            .copy()
         )
 
-        # Last 8 occurrences
-        historical = historical.tail(8)
+        # Latest history only
+        day_history = day_history.tail(8)
 
-        abs_forecast = historical["ABS"].median()
-
-        offline_forecast = (
-            historical["OFFLINE"]
-            .median()
+        abs_fc = weighted_forecast(
+            day_history["ABS_RATE"]
         )
 
-        total_forecast = (
-            abs_forecast
-            + offline_forecast
+        offline_fc = weighted_forecast(
+            day_history["OFFLINE_RATE"]
         )
 
-        forecast_rows.append({
+        total_fc = (
+            abs_fc +
+            offline_fc
+        )
+
+        future_rows.append({
 
             "Date":
-            current_date.date(),
+                current_date.date(),
 
             "Day":
-            day_name,
+                day_name,
 
             "ABS Forecast":
-            round(abs_forecast, 4),
+                round(abs_fc, 4),
 
             "Offline Forecast":
-            round(offline_forecast, 4),
+                round(offline_fc, 4),
 
             "Total Shrinkage":
-            round(total_forecast, 4)
+                round(total_fc, 4)
 
         })
 
         generated += 1
 
     result = pd.DataFrame(
-        forecast_rows
+        future_rows
     )
 
     return result
