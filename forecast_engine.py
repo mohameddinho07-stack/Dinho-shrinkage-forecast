@@ -1,6 +1,15 @@
 import pandas as pd
 import numpy as np
 
+from sklearn.ensemble import (
+    RandomForestRegressor,
+    GradientBoostingRegressor
+)
+
+
+# ------------------------
+# Utilities
+# ------------------------
 
 def remove_outliers_iqr(series):
 
@@ -15,46 +24,102 @@ def remove_outliers_iqr(series):
     return series.clip(lower, upper)
 
 
-def weighted_forecast(values):
+def create_features(data):
+
+    data = data.copy()
+
+    data["WeekdayNum"] = data["Date"].dt.weekday
+    data["Month"] = data["Date"].dt.month
+    data["WeekOfYear"] = (
+        data["Date"]
+        .dt.isocalendar()
+        .week.astype(int)
+    )
+
+    data["DayOfMonth"] = (
+        data["Date"]
+        .dt.day
+    )
+
+    data["Lag1"] = (
+        data["TARGET"]
+        .shift(1)
+    )
+
+    data["Rolling7"] = (
+        data["TARGET"]
+        .rolling(7, min_periods=1)
+        .mean()
+    )
+
+    data["Rolling14"] = (
+        data["TARGET"]
+        .rolling(14, min_periods=1)
+        .mean()
+    )
+
+    return data
+
+
+def weighted_forecast(series):
+
+    values = list(series)
 
     if len(values) == 0:
         return 0
 
-    values = list(values)
+    weights = np.arange(
+        1,
+        len(values) + 1
+    )
 
-    weights = np.arange(1, len(values) + 1)
+    return np.average(
+        values,
+        weights=weights
+    )
 
-    return np.average(values, weights=weights)
 
+# ------------------------
+# Main
+# ------------------------
 
 def forecast_lob(df, lob):
 
-    df = df[df["LOB"] == lob].copy()
+    df = df[
+        df["LOB"] == lob
+    ].copy()
 
     if len(df) == 0:
         return pd.DataFrame()
 
-    df["Date"] = pd.to_datetime(df["Date"])
+    df["Date"] = pd.to_datetime(
+        df["Date"]
+    )
 
-    df = df[df["Scheduled Hours"] > 0]
+    df = df[
+        df["Scheduled Hours"] > 0
+    ]
 
-    # Recalculate from source
+    # Recalculate shrinkage
     df["ABS_RATE"] = (
-        df["Abs Hours"] /
+        df["Abs Hours"]
+        /
         df["Scheduled Hours"]
     )
 
     df["OFFLINE_RATE"] = (
-        df["Offline"] /
+        df["Offline"]
+        /
         df["Scheduled Hours"]
     )
 
     df["TOTAL_RATE"] = (
-        df["ABS_RATE"] +
+        df["ABS_RATE"]
+        +
         df["OFFLINE_RATE"]
     )
 
-    # Remove bad data
+    # Data cleaning
     df["ABS_RATE"] = remove_outliers_iqr(
         df["ABS_RATE"]
     )
@@ -67,110 +132,223 @@ def forecast_lob(df, lob):
         df["TOTAL_RATE"]
     )
 
-    df["Weekday"] = df["Date"].dt.day_name()
+    df["Weekday"] = (
+        df["Date"]
+        .dt.day_name()
+    )
 
-    weekday_order = [
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-        "Sunday"
-    ]
-
-    # Detect real operating days
-    working_days = []
-
+    # Detect actual operating days
     weekday_counts = (
         df["Weekday"]
         .value_counts()
-        .to_dict()
     )
 
-    max_count = max(
-        weekday_counts.values()
+    working_days = list(
+        weekday_counts.index
     )
 
-    for day in weekday_order:
+    num_operating_days = len(
+        working_days
+    )
 
-        cnt = weekday_counts.get(day, 0)
+    last_date = (
+        df["Date"].max()
+    )
 
-        if cnt >= (max_count * 0.5):
-            working_days.append(day)
+    # Model selector
 
-    if len(working_days) == 0:
+    total_days = len(
+        df["Date"].unique()
+    )
 
-        working_days = list(
-            df["Weekday"].unique()
-        )
+    if total_days < 21:
+        selected_model = "historical"
 
-    last_date = df["Date"].max()
+    elif total_days < 60:
+        selected_model = "rf"
 
-    future_rows = []
+    else:
+        selected_model = "gbr"
+
+    results = []
 
     current_date = last_date
 
     generated = 0
 
-    target_days = len(working_days)
-
-    while generated < target_days:
+    while generated < num_operating_days:
 
         current_date += pd.Timedelta(days=1)
 
-        day_name = current_date.day_name()
+        day_name = (
+            current_date.day_name()
+        )
 
         if day_name not in working_days:
             continue
 
-        day_history = (
-            df[
-                df["Weekday"] == day_name
-            ]
-            .sort_values("Date")
-            .copy()
+        day_history = df[
+            df["Weekday"] == day_name
+        ].copy()
+
+        abs_fc = forecast_metric(
+            day_history,
+            "ABS_RATE",
+            selected_model
         )
 
-        # Latest history only
-        day_history = day_history.tail(8)
-
-        abs_fc = weighted_forecast(
-            day_history["ABS_RATE"]
-        )
-
-        offline_fc = weighted_forecast(
-            day_history["OFFLINE_RATE"]
+        off_fc = forecast_metric(
+            day_history,
+            "OFFLINE_RATE",
+            selected_model
         )
 
         total_fc = (
-            abs_fc +
-            offline_fc
+            abs_fc + off_fc
         )
 
-        future_rows.append({
+        results.append({
 
             "Date":
-                current_date.date(),
+            current_date.date(),
 
             "Day":
-                day_name,
+            day_name,
 
             "ABS Forecast":
-                round(abs_fc, 4),
+            round(abs_fc, 4),
 
             "Offline Forecast":
-                round(offline_fc, 4),
+            round(off_fc, 4),
 
             "Total Shrinkage":
-                round(total_fc, 4)
+            round(total_fc, 4),
+
+            "Model":
+            selected_model.upper()
 
         })
 
         generated += 1
 
-    result = pd.DataFrame(
-        future_rows
+    return pd.DataFrame(
+        results
     )
 
-    return result
+
+# ------------------------
+# Forecast Method
+# ------------------------
+
+def forecast_metric(
+    data,
+    target_col,
+    model_type
+):
+
+    data = data.copy()
+
+    data["TARGET"] = (
+        data[target_col]
+    )
+
+    if len(data) < 5:
+
+        return data[
+            "TARGET"
+        ].median()
+
+    if model_type == "historical":
+
+        return weighted_forecast(
+            data["TARGET"].tail(8)
+        )
+
+    data = create_features(
+        data
+    )
+
+    data = data.dropna()
+
+    features = [
+
+        "WeekdayNum",
+        "Month",
+        "WeekOfYear",
+        "DayOfMonth",
+        "Lag1",
+        "Rolling7",
+        "Rolling14"
+
+    ]
+
+    X = data[features]
+
+    y = data["TARGET"]
+
+    if len(X) < 10:
+
+        return weighted_forecast(
+            y.tail(8)
+        )
+
+    if model_type == "rf":
+
+        model = RandomForestRegressor(
+
+            n_estimators=300,
+            max_depth=8,
+            random_state=42
+
+        )
+
+    else:
+
+        model = GradientBoostingRegressor(
+
+            n_estimators=300,
+            random_state=42
+
+        )
+
+    model.fit(X, y)
+
+    latest = data.iloc[-1]
+
+    future = pd.DataFrame([{
+
+        "WeekdayNum":
+        latest["WeekdayNum"],
+
+        "Month":
+        latest["Month"],
+
+        "WeekOfYear":
+        latest["WeekOfYear"],
+
+        "DayOfMonth":
+        latest["DayOfMonth"],
+
+        "Lag1":
+        latest["TARGET"],
+
+        "Rolling7":
+        data["TARGET"]
+        .tail(7)
+        .mean(),
+
+        "Rolling14":
+        data["TARGET"]
+        .tail(14)
+        .mean()
+
+    }])
+
+    pred = model.predict(
+        future
+    )[0]
+
+    return max(
+        pred,
+        0
+    )
